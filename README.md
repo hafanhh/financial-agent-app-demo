@@ -5,13 +5,28 @@
 ## Running the demo
 
 ```bash
-bun install   # first time only
-bun dev       # opens at http://localhost:5173
+npm install        # first time only
+npm run dev        # frontend :5173 + backend :3001
+```
+
+> **Iteration 4 — Real LLM setup:** Copy `server.env.example` to `.env` and add your Anthropic API key before running. Without the key the server starts but returns 503 on document uploads; all mock features still work.
+
+```bash
+cp server.env.example .env
+# edit .env — add ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### Restart backend server
+
+```bash
+lsof -ti :3001 | xargs kill -9 && npm run dev:server
 ```
 
 Navigate from the left sidebar in order: Platform Overview → M1 → M2 → M3 → **Data & Knowledge** → Future Modules.
 
 > **What's new in Iteration 2:** M3 has a persona switcher (CEO ↔ Store Manager) with persona-aware suggested prompts and 5 hardcoded example conversations. A new "Data & Knowledge" scene shows the documents and structured sources the agents draw from, with bi-directional navigation: click a citation in M3 to jump to the document with the cited region highlighted; click "Open in M3 →" in a document to filter the chat to messages citing it.
+>
+> **What's new in Iteration 4 (M3-only):** Document upload + real Gemini API call in M3 chat. Click the paperclip icon (or drag-and-drop) to attach a PDF or image. The backend calls `gemini-1.5-flash` with the file + BAKED business context, returns a structured response (extracted metrics table, cross-references to M1/M2/M3 platform data, confidence badge). A 🟢 Live API badge appears in the M3 header after the first successful call. All existing mock conversations unchanged. Backend runs on port 3001 via Express + multer.
 >
 > **What's new in Iteration 3 (M3-only):** Four CEO-surface features layered onto M3: (1) Morning Briefing card (1 red / 2 yellow / 1 green) at the top of the CEO view, (2) Compare Locations panel with 2-column pair view + Chain Overview mode + auto-generated explanation, (3) KPI Strip with sparklines and one-click drill-in prompts, (4) Confidence markers on every agent answer (high / medium / low + expandable "why"). Store Manager view gets the one-line briefing + persona-specific KPIs. **M1 and M2 source files were not modified.**
 
@@ -108,6 +123,38 @@ The routing uses TanStack Router file-based routes (`/m1`, `/m2`, `/m3`, `/futur
 The architecture diagram is hand-rolled HTML/CSS rather than a diagramming library (Mermaid, ReactFlow) — this keeps it fully under control for pixel-perfect polish and avoids a new dependency. If the client asks for an editable or zoomable version, ReactFlow would be the natural next step.
 
 The `bunfig.toml` has a 24-hour release-age guard on new packages; no new dependencies were added to avoid triggering it.
+
+---
+
+## Iteration 4 — implementation notes
+
+- **Completed fully.** Backend (Express + multer + Anthropic SDK) at `server/`, frontend upload UI wired into M3 chat input. Real API call → structured `document-analysis-result` message bubble with extracted metrics table, cross-reference badges, citation row, confidence badge (reuses iter3 component). Live API / Mock data transparency badges in M3 header.
+- **No streaming.** Standard JSON response per spec. Cycling thinking animation ("Reading document… → Extracting data… → Cross-referencing platform metrics…") gives visual feedback while waiting.
+- **API key not yet set.** Build and all mock features work without the key. Backend returns 503 with friendly error message in chat when key is missing. Add key to `.env` when ready to demo the real call.
+- **Model used.** `claude-sonnet-4-20250514` as specified. Native PDF + image support via Anthropic's document/image content blocks — no pre-processing.
+- **Server runs as a separate process.** `npm run dev` starts both via `concurrently`. Old `dev:frontend` alias still works standalone if backend not needed.
+- **M1/M2 untouched.** Only `src/routes/m3.tsx`, `src/lib/data/finance.ts`, `src/services/analyzeApi.ts`, and the new `src/components/m3/document-analysis-bubble.tsx` were added/modified.
+- **What I would add next.** (a) What-If panel (iter3 placeholder now ready to replace). (b) Streaming response — swap `response.json()` for a streaming fetch and show text token by token. (c) Save uploaded documents to the Knowledge Base as new entries so they appear in the Data tab.
+
+### Demo script for iter4
+
+*"Phần này không phải mock. Tôi sẽ upload file thật — bất kỳ PDF hoặc ảnh nào."* *(Click paperclip hoặc drag-drop file vào chat.)* *"Gõ câu hỏi, nhấn send. Đây là live call đến Anthropic Claude API — agent đọc document, cross-reference với data platform, trả lời trong context BAKED. Badge xanh 'Live API' xuất hiện sau call đầu tiên."*
+
+### Test files for demo
+
+Place in `/demo-assets/` (add to `.gitignore`):
+- **PDF financial report** → ask: *"What's our food cost and how does it compare to target?"*
+- **Screenshot/photo of invoice or dashboard** → ask: *"Is this butter price higher than usual? How does it affect our margin?"*
+- **Store interior or product photo** → ask: *"What do you see, and is there anything operationally relevant?"* ← wow moment
+
+### What's real vs mock
+
+| Feature | Status |
+| --- | --- |
+| Document upload → Claude API → structured response | **REAL** |
+| All M3 chat history (examples 1–5, CEO + SM) | Mock |
+| Morning Briefing, KPI Strip, Compare Locations | Mock |
+| M1 Demand Forecasting, M2 Customer Intelligence | Mock |
 
 ---
 

@@ -46,6 +46,19 @@ export type AgentMessageContent =
       label: string;
       catalogFilter?: string[]; // source ids in dataCatalog.ts
       bannerLabel?: string;     // banner shown on data catalog after filter applied
+    }
+  // Iter4 — real Anthropic API response rendered inline in chat
+  | {
+      type: "document-analysis-result";
+      answer: string;
+      extractedData: {
+        documentType: string;
+        summary: string;
+        keyMetrics: { label: string; value: string; unit?: string }[];
+      } | null;
+      citations: { source: string; page?: number; excerpt: string }[];
+      confidenceReason: string;
+      crossReferenced: { module: string; dataPoint: string; insight: string }[];
     };
 
 // Iter3 — confidence indicator carried at message level so it always renders next to the headline.

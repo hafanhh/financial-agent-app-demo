@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useRef, useState, useEffect, useMemo } from "react";
+import { useRef, useState, useEffect, useMemo, useCallback } from "react";
 import {
   Send,
   ExternalLink,
@@ -9,8 +9,12 @@ import {
   X,
   ArrowRight,
   Scale,
+  Paperclip,
+  FileText,
+  Image as ImageIcon,
 } from "lucide-react";
 import { AppShell, PageHeader } from "@/components/app-shell";
+import { DocumentAnalysisBubble } from "@/components/m3/document-analysis-bubble";
 import { PersonaSwitcher } from "@/components/m3/persona-switcher";
 import { CitationChip } from "@/components/m3/citation-chip";
 import { ConfidenceBadge } from "@/components/m3/confidence-badge";
@@ -36,6 +40,7 @@ import {
 } from "@/lib/data/m3Chat";
 import { buildExplanationMessage, getLocation } from "@/lib/data/comparison";
 import { useAppNav } from "@/lib/app-nav-context";
+import { analyzeDocument as callAnalyzeApi } from "@/services/analyzeApi";
 import { findDocument } from "@/lib/data/knowledgeBase";
 import { cn } from "@/lib/utils";
 
@@ -377,6 +382,19 @@ function AgentBubble({
             </button>
           );
         }
+        // Iter4 — real API response rendered as structured bubble
+        if (block.type === "document-analysis-result" && confidence) {
+          return (
+            <DocumentAnalysisBubble
+              key={i}
+              answer={block.answer}
+              extractedData={block.extractedData}
+              citations={block.citations}
+              confidence={confidence}
+              crossReferenced={block.crossReferenced}
+            />
+          );
+        }
         return null;
       })}
     </div>
@@ -464,6 +482,39 @@ function ThinkingDots() {
             />
           ))}
           <span className="text-xs text-muted-foreground ml-2 italic">Searching P&L data…</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Iter4 — cycling phases shown during real API document analysis
+const ANALYSIS_PHASES = ["Reading document…", "Extracting data…", "Cross-referencing platform metrics…"];
+
+function ThinkingDotsAnalyzing() {
+  const [phase, setPhase] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setPhase((p) => Math.min(p + 1, ANALYSIS_PHASES.length - 1)), 800);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div className="flex justify-start">
+      <div className="bg-card border border-border/70 rounded-sm px-4 py-3">
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <div className="size-1.5 rounded-full bg-gold animate-pulse" />
+          <span className="text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
+            Financial Agent · Live API
+          </span>
+        </div>
+        <div className="flex items-center gap-1">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="size-1.5 rounded-full bg-gold/60 animate-pulse"
+              style={{ animationDelay: `${i * 180}ms` }}
+            />
+          ))}
+          <span className="text-xs text-muted-foreground ml-2 italic">{ANALYSIS_PHASES[phase]}</span>
         </div>
       </div>
     </div>
@@ -586,6 +637,27 @@ function M3FinancialAgent() {
   const messageRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
   const [flashId, setFlashId] = useState<string | null>(null);
 
+  // Iter4 — upload state
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [liveApiActive, setLiveApiActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileSelect = useCallback((file: File) => {
+    const allowed = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+    if (!allowed.includes(file.type)) {
+      setUploadError("Only JPEG, PNG, WEBP, and PDF files are supported.");
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setUploadError("File too large — maximum 20 MB.");
+      return;
+    }
+    setUploadedFile(file);
+    setUploadError(null);
+  }, []);
+
   const messages = useMemo(() => [...baseMessages, ...liveMessages], [baseMessages, liveMessages]);
 
   // "Filter by cited doc" — applied on top of persona filtering.
@@ -638,22 +710,83 @@ function M3FinancialAgent() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [liveMessages.length, thinking, m3.scrollToMessageId]);
 
-  const handleSend = (text?: string) => {
+  const handleSend = async (text?: string) => {
     const query = (text ?? inputValue).trim();
-    if (!query || thinking) return;
+    if (!query || thinking || isAnalyzing) return;
+
+    const ts = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
     const userMsg: ChatMessage = {
       id: `u-${Date.now()}`,
       role: "user",
-      content: query,
-      timestamp: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+      content: uploadedFile ? `📄 ${uploadedFile.name}\n${query}` : query,
+      timestamp: ts(),
       persona,
       storeManagerLocation: persona === "StoreManager" ? smLocation : undefined,
     };
     setLiveMessages((prev) => [...prev, userMsg]);
     setInputValue("");
-    setThinking(true);
 
+    // Iter4 — if a file is attached, call the real API
+    if (uploadedFile) {
+      const file = uploadedFile;
+      setUploadedFile(null);
+      setUploadError(null);
+      setIsAnalyzing(true);
+      try {
+        const result = await callAnalyzeApi({
+          file,
+          question: query,
+          persona,
+          activeLocation: persona === "StoreManager" ? smLocation : "Chain-wide",
+        });
+        setLiveApiActive(true);
+        const confidence = {
+          level: result.confidence,
+          summary: result.confidenceReason,
+          whyDetails: [result.confidenceReason],
+        };
+        const agentMsg: ChatMessage = {
+          id: `a-api-${Date.now()}`,
+          role: "agent",
+          persona,
+          storeManagerLocation: persona === "StoreManager" ? smLocation : undefined,
+          confidence,
+          content: [
+            {
+              type: "document-analysis-result",
+              answer: result.answer,
+              extractedData: result.extractedData,
+              citations: result.citations,
+              confidenceReason: result.confidenceReason,
+              crossReferenced: result.crossReferenced,
+            },
+          ],
+          timestamp: ts(),
+        };
+        setLiveMessages((prev) => [...prev, agentMsg]);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Analysis failed";
+        setUploadError(message);
+        const errMsg: ChatMessage = {
+          id: `a-err-${Date.now()}`,
+          role: "agent",
+          persona,
+          content: [
+            { type: "text", text: `Could not analyze the document: ${message}` },
+            { type: "bullets", items: ["Check that the backend server is running (port 3001)", "Ensure GEMINI_API_KEY is set in .env"] },
+          ],
+          timestamp: ts(),
+        };
+        setLiveMessages((prev) => [...prev, errMsg]);
+      } finally {
+        setIsAnalyzing(false);
+      }
+      return;
+    }
+
+    // Existing mock behavior
+    setThinking(true);
     setTimeout(() => {
       const lower = query.toLowerCase();
       const match = CANNED_RESPONSES.find((r) => r.keywords.some((kw) => lower.includes(kw)));
@@ -672,18 +805,18 @@ function M3FinancialAgent() {
               persona,
               storeManagerLocation: persona === "StoreManager" ? smLocation : undefined,
               content: [
-                { type: "text", text: `I've searched the P&L and operational data for "${query}". Here's the closest match I found:` },
+                { type: "text" as const, text: `I've searched the P&L and operational data for "${query}". Here's the closest match I found:` },
                 {
-                  type: "bullets",
+                  type: "bullets" as const,
                   items: [
                     "Data available for W18–W22 across all 7 locations",
                     "No direct match — try asking about margin, waste, or a specific location",
                     "Example: 'What was Canggu's waste rate last week?'",
                   ],
                 },
-                { type: "citations", chips: [{ id: "fb1", label: "P&L_May2026_Chain.xlsx", docId: "pnl-may2026-chain" }] },
+                { type: "citations" as const, chips: [{ id: "fb1", label: "P&L_May2026_Chain.xlsx", docId: "pnl-may2026-chain" }] },
               ],
-              timestamp: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+              timestamp: ts(),
             },
           ];
 
@@ -727,6 +860,19 @@ function M3FinancialAgent() {
         eyebrow="M3 · Financial Agent"
         title="Financial intelligence chat"
         description="Private RAG over P&L data. Ask questions in plain English — the agent retrieves relevant figures, shows its working, and cites every source. No data leaves your infrastructure."
+        actions={
+          <div className="flex items-center gap-2 flex-wrap">
+            {liveApiActive && (
+              <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] border rounded-sm px-2 py-0.5 text-success border-success/30 bg-success/8">
+                <span className="size-1.5 rounded-full bg-success animate-pulse inline-block" />
+                Live API
+              </span>
+            )}
+            <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] border rounded-sm px-2 py-0.5 text-muted-foreground border-border/70 bg-secondary/40">
+              Mock data
+            </span>
+          </div>
+        }
       />
 
       <PersonaSwitcher />
@@ -764,14 +910,14 @@ function M3FinancialAgent() {
         </div>
       )}
 
-      <div className="grid grid-cols-[1fr_340px] gap-5 items-start">
+      <div className="grid grid-cols-[1fr_280px] gap-5 items-start">
         {/* Chat panel — replaced by ComparePanel when compare mode is active */}
         {compareActive ? (
           <ComparePanel onGenerateExplanation={handleGenerateExplanation} />
         ) : (
         <div
           className="rounded-sm border border-border/70 bg-background flex flex-col"
-          style={{ height: "calc(100vh - 480px)", minHeight: 480 }}
+          style={{ height: "calc(100vh - 300px)", minHeight: 520 }}
         >
           {/* Suggested prompts */}
           <div className="px-4 pt-4 pb-3 border-b border-border/70 flex flex-wrap gap-2">
@@ -806,39 +952,108 @@ function M3FinancialAgent() {
                 />
               ))
             )}
+            {isAnalyzing && <ThinkingDotsAnalyzing />}
             {thinking && <ThinkingDots />}
             <div ref={bottomRef} />
           </div>
 
           {/* Input */}
-          <div className="border-t border-border/70 p-3 flex items-end gap-2">
-            <textarea
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
+          <div className="border-t border-border/70 p-3 space-y-2">
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,application/pdf"
+              aria-label="Upload document for analysis"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFileSelect(f);
+                e.target.value = "";
               }}
-              placeholder={
-                persona === "CEO"
-                  ? "Ask a chain-wide question…"
-                  : `Ask about ${smLocation}…`
-              }
-              rows={1}
-              className="flex-1 resize-none bg-card border border-border/70 rounded-sm px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-walnut/40 placeholder:text-muted-foreground/50"
-              style={{ minHeight: 38 }}
             />
-            <button
-              type="button"
-              onClick={() => handleSend()}
-              disabled={!inputValue.trim() || thinking}
-              aria-label="Send message"
-              className="shrink-0 flex items-center justify-center size-[38px] rounded-sm bg-ink text-cream disabled:opacity-40 hover:bg-ink/90 transition-colors"
+
+            {/* File preview chip */}
+            {uploadedFile && (
+              <div className="flex items-center gap-2 rounded-sm border border-gold/40 bg-gold/8 px-3 py-1.5">
+                {uploadedFile.type.startsWith("image/") ? (
+                  <ImageIcon className="size-3.5 text-walnut shrink-0" />
+                ) : (
+                  <FileText className="size-3.5 text-walnut shrink-0" />
+                )}
+                <span className="text-xs text-ink truncate flex-1 min-w-0">{uploadedFile.name}</span>
+                <span className="text-[10px] text-muted-foreground shrink-0">
+                  {(uploadedFile.size / 1024 / 1024).toFixed(1)} MB · Ready to analyze
+                </span>
+                <button
+                  type="button"
+                  aria-label="Remove file"
+                  onClick={() => { setUploadedFile(null); setUploadError(null); }}
+                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Error message */}
+            {uploadError && (
+              <p className="text-xs text-destructive px-1">{uploadError}</p>
+            )}
+
+            {/* Input row */}
+            <div
+              className="flex items-end gap-2"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const f = e.dataTransfer.files?.[0];
+                if (f) handleFileSelect(f);
+              }}
             >
-              <Send className="size-4" />
-            </button>
+              <button
+                type="button"
+                aria-label="Attach file"
+                onClick={() => fileInputRef.current?.click()}
+                className={cn(
+                  "shrink-0 flex items-center justify-center size-[38px] rounded-sm border transition-colors",
+                  uploadedFile
+                    ? "border-gold/60 text-walnut bg-gold/10"
+                    : "border-border/70 text-muted-foreground hover:text-foreground hover:border-walnut/40 bg-card",
+                )}
+              >
+                <Paperclip className="size-4" />
+              </button>
+              <textarea
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void handleSend();
+                  }
+                }}
+                placeholder={
+                  uploadedFile
+                    ? "Ask a question about this document…"
+                    : persona === "CEO"
+                      ? "Ask a chain-wide question…"
+                      : `Ask about ${smLocation}…`
+                }
+                rows={1}
+                className="flex-1 resize-none bg-card border border-border/70 rounded-sm px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-walnut/40 placeholder:text-muted-foreground/50"
+                style={{ minHeight: 38 }}
+              />
+              <button
+                type="button"
+                onClick={() => void handleSend()}
+                disabled={!inputValue.trim() || thinking || isAnalyzing}
+                aria-label="Send message"
+                className="shrink-0 flex items-center justify-center size-[38px] rounded-sm bg-ink text-cream disabled:opacity-40 hover:bg-ink/90 transition-colors"
+              >
+                <Send className="size-4" />
+              </button>
+            </div>
           </div>
         </div>
         )}

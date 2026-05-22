@@ -49,7 +49,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       {/* Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-20 w-60 flex flex-col bg-card border-r border-border/70">
+      <aside className="fixed inset-y-0 left-0 z-20 w-48 flex flex-col bg-card border-r border-border/70">
         {/* Brand mark */}
         <div className="px-5 pt-6 pb-5 border-b border-border/70">
           <Link to="/" className="flex items-center gap-3 group">
@@ -147,7 +147,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Main content — offset by sidebar width */}
-      <main className="flex-1 ml-60 min-h-screen">
+      <main className="flex-1 ml-48 min-h-screen">
         <div className="max-w-[1160px] mx-auto px-10 py-10">{children}</div>
       </main>
     </div>
