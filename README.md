@@ -7,7 +7,7 @@
 ```bash
 npm install        # first time only
 npm run dev        # frontend :5173 + backend :3001
-npm run dev:server # backend only
+npm run dev:server:py  # chỉ Python backend
 ```
 
 > **Iteration 4 — Real LLM setup:** Copy `server.env.example` to `.env` and add your Anthropic API key before running. Without the key the server starts but returns 503 on document uploads; all mock features still work.
@@ -20,7 +20,7 @@ cp server.env.example .env
 ### Restart backend server
 
 ```bash
-lsof -ti :3001 | xargs kill -9 && npm run dev:server
+lsof -ti :3001 | xargs kill -9 && npm run dev:server:py
 ```
 
 Navigate from the left sidebar in order: Platform Overview → M1 → M2 → M3 → **Data & Knowledge** → Future Modules.
