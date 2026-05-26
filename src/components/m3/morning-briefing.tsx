@@ -131,7 +131,7 @@ function BriefingRow({ item }: { item: BriefingItem }) {
 }
 
 function BriefingActionButton({ action }: { action: BriefingAction }) {
-  const { setPendingPrompt, openDocFromAnomaly, openCompareView } = useAppNav();
+  const { setPendingPrompt, openDocFromAnomaly, openCompareView, openWhatIfView } = useAppNav();
 
   const onClick = () => {
     if (action.kind === "insertPrompt") {
@@ -139,8 +139,7 @@ function BriefingActionButton({ action }: { action: BriefingAction }) {
       return;
     }
     if (action.kind === "openWhatIf") {
-      // Iter3 — What-If panel not yet built. Falls back to prompt insertion.
-      setPendingPrompt(action.payload);
+      openWhatIfView();
       return;
     }
     if (action.kind === "openDoc") {

@@ -10,6 +10,7 @@ import {
 
 import appCss from "../styles.css?url";
 import { AppNavProvider } from "@/lib/app-nav-context";
+import { Toaster } from "@/components/ui/sonner";
 
 function NotFoundComponent() {
   return (
@@ -123,6 +124,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <AppNavProvider>
         <Outlet />
+        <Toaster />
       </AppNavProvider>
     </QueryClientProvider>
   );

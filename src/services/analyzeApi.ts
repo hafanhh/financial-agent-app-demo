@@ -3,6 +3,7 @@ export interface AnalyzeRequest {
   question: string
   persona: 'CEO' | 'StoreManager'
   activeLocation?: string
+  sessionId?: string
 }
 
 export interface AnalyzeResponse {
@@ -25,6 +26,9 @@ export async function analyzeDocument(req: AnalyzeRequest): Promise<AnalyzeRespo
   formData.append('persona', req.persona)
   if (req.activeLocation) {
     formData.append('activeLocation', req.activeLocation)
+  }
+  if (req.sessionId) {
+    formData.append('sessionId', req.sessionId)
   }
 
   const response = await fetch('http://localhost:3001/api/analyze', {

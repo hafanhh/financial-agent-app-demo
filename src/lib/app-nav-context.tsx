@@ -32,6 +32,8 @@ export type M3State = {
   compareMode: CompareMode;
   compareLeftId: string;
   compareRightId: string;
+  // Iter5 — What-if simulator panel.
+  whatIfMode: boolean;
 };
 
 export type DataTabState = {
@@ -63,6 +65,9 @@ type Ctx = {
   closeCompareView: () => void;
   setCompareLeft: (id: string) => void;
   setCompareRight: (id: string) => void;
+  // Iter5 — What-if simulator
+  openWhatIfView: () => void;
+  closeWhatIfView: () => void;
 
   // High-level navigation actions
   openDocFromCitation: (args: {
@@ -100,6 +105,7 @@ export function AppNavProvider({ children }: { children: React.ReactNode }) {
   const [compareMode, setCompareModeState] = useState<CompareMode>("off");
   const [compareLeftId, setCompareLeftId] = useState<string>("seminyak");
   const [compareRightId, setCompareRightId] = useState<string>("canggu");
+  const [whatIfMode, setWhatIfModeState] = useState<boolean>(false);
 
   const [activeSubTab, setActiveSubTabState] = useState<DataSubTab>("kb");
   const [selectedDocId, setSelectedDocIdState] = useState<string | null>(DEFAULT_SELECTED_DOC_ID);
@@ -150,6 +156,7 @@ export function AppNavProvider({ children }: { children: React.ReactNode }) {
 
   const openCompareView = useCallback<Ctx["openCompareView"]>(
     ({ mode, leftId, rightId }) => {
+      setWhatIfModeState(false);
       setCompareModeState(mode);
       if (leftId) setCompareLeftId(leftId);
       if (rightId) setCompareRightId(rightId);
@@ -160,6 +167,16 @@ export function AppNavProvider({ children }: { children: React.ReactNode }) {
 
   const closeCompareView = useCallback(() => {
     setCompareModeState("off");
+  }, []);
+
+  const openWhatIfView = useCallback(() => {
+    setCompareModeState("off");
+    setWhatIfModeState(true);
+    navigate({ to: "/m3" });
+  }, [navigate]);
+
+  const closeWhatIfView = useCallback(() => {
+    setWhatIfModeState(false);
   }, []);
 
   // ---- Cross-scene actions -----------------------------------------------
@@ -238,6 +255,7 @@ export function AppNavProvider({ children }: { children: React.ReactNode }) {
         compareMode,
         compareLeftId,
         compareRightId,
+        whatIfMode,
       },
       dataTab: {
         activeSubTab,
@@ -262,6 +280,8 @@ export function AppNavProvider({ children }: { children: React.ReactNode }) {
       closeCompareView,
       setCompareLeft,
       setCompareRight,
+      openWhatIfView,
+      closeWhatIfView,
       openDocFromCitation,
       openDocFromAnomaly,
       openCatalogFiltered,
@@ -279,6 +299,7 @@ export function AppNavProvider({ children }: { children: React.ReactNode }) {
       compareMode,
       compareLeftId,
       compareRightId,
+      whatIfMode,
       activeSubTab,
       selectedDocId,
       highlightRegion,
@@ -300,6 +321,8 @@ export function AppNavProvider({ children }: { children: React.ReactNode }) {
       closeCompareView,
       setCompareLeft,
       setCompareRight,
+      openWhatIfView,
+      closeWhatIfView,
       openDocFromCitation,
       openDocFromAnomaly,
       openCatalogFiltered,

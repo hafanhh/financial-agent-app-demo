@@ -59,6 +59,23 @@ export type AgentMessageContent =
       citations: { source: string; page?: number; excerpt: string }[];
       confidenceReason: string;
       crossReferenced: { module: string; dataPoint: string; insight: string }[];
+    }
+  // Iter5 F3 — waste log result rendered as structured table with confirm flow
+  | {
+      type: "waste-log-result";
+      logId: string;
+      location: string;
+      wasteItems: {
+        sku: string;
+        estimatedUnits: number;
+        estimatedCostIDR: number;
+        confidence: "high" | "medium" | "low";
+        condition: "waste" | "possibly-sellable" | "unclear";
+        notes?: string;
+      }[];
+      totalEstimatedWasteCostIDR: number;
+      imageQuality: string;
+      recommendation: string;
     };
 
 // Iter3 — confidence indicator carried at message level so it always renders next to the headline.

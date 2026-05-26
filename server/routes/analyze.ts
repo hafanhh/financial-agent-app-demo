@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { upload } from '../middleware/upload.js'
 import { analyzeDocument } from '../services/claude.js'
+import { saveMessage, getOrCreateSession } from '../services/db.js'
 
 export const analyzeRouter = Router()
 
@@ -26,6 +27,7 @@ analyzeRouter.post(
 
     const persona = (req.body.persona as 'CEO' | 'StoreManager') || 'CEO'
     const activeLocation = req.body.activeLocation || 'Chain-wide'
+    const sessionId = req.body.sessionId as string | undefined
 
     try {
       const result = await analyzeDocument({
@@ -36,6 +38,31 @@ analyzeRouter.post(
         persona,
         activeLocation,
       })
+
+      // Persist to memory if session provided
+      if (sessionId) {
+        getOrCreateSession(sessionId, persona, persona === 'StoreManager' ? activeLocation : undefined)
+        const now = Date.now()
+        saveMessage({
+          id: `u-${now}`,
+          session_id: sessionId,
+          role: 'user',
+          content: `[Document: ${req.file.originalname}] ${userQuestion}`,
+          citations: null,
+          confidence: null,
+          message_type: 'upload',
+        })
+        saveMessage({
+          id: `a-${now}`,
+          session_id: sessionId,
+          role: 'agent',
+          content: result.answer,
+          citations: JSON.stringify(result.citations),
+          confidence: result.confidence,
+          message_type: 'upload',
+        })
+      }
+
       res.json(result)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Analysis failed'

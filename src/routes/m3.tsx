@@ -12,7 +12,12 @@ import {
   Paperclip,
   FileText,
   Image as ImageIcon,
+  Zap,
+  Trash2,
+  MessageSquare,
+  ChevronDown,
 } from "lucide-react";
+import { toast } from "sonner";
 import { AppShell, PageHeader } from "@/components/app-shell";
 import { DocumentAnalysisBubble } from "@/components/m3/document-analysis-bubble";
 import { PersonaSwitcher } from "@/components/m3/persona-switcher";
@@ -20,8 +25,10 @@ import { CitationChip } from "@/components/m3/citation-chip";
 import { ConfidenceBadge } from "@/components/m3/confidence-badge";
 import { KpiStrip } from "@/components/m3/kpi-strip";
 import { MorningBriefing } from "@/components/m3/morning-briefing";
-import { SmBriefing } from "@/components/m3/sm-briefing";
 import { ComparePanel } from "@/components/m3/compare-panel";
+import { StoreChecklist } from "@/components/m3/store-checklist";
+import { WhatIfPanel } from "@/components/m3/what-if-panel";
+import { TrendWatch } from "@/components/m3/trend-watch";
 import {
   CHAT_HISTORY,
   ANOMALY_ALERTS,
@@ -42,6 +49,7 @@ import { buildExplanationMessage, getLocation } from "@/lib/data/comparison";
 import { useAppNav } from "@/lib/app-nav-context";
 import { analyzeDocument as callAnalyzeApi } from "@/services/analyzeApi";
 import { findDocument } from "@/lib/data/knowledgeBase";
+import { getSessionId } from "@/utils/session";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/m3")({ component: M3FinancialAgent });
@@ -54,7 +62,6 @@ function messageMatchesPersona(
   persona: Persona,
   smLocation: StoreLocation,
 ): boolean {
-  // Messages without a persona tag are treated as legacy and shown to both.
   if (!msg.persona) return true;
   if (msg.persona !== persona) return false;
   if (persona === "StoreManager" && msg.storeManagerLocation && msg.storeManagerLocation !== smLocation) {
@@ -70,9 +77,27 @@ function messageCitesDoc(msg: ChatMessage, docId: string): boolean {
   );
 }
 
-// -----------------------------------------------------------------------------
-// Agent message rendering
-// -----------------------------------------------------------------------------
+// ── Waste log types ───────────────────────────────────────────────────────────
+
+type WasteItem = {
+  sku: string;
+  estimatedUnits: number;
+  estimatedCostIDR: number;
+  confidence: "high" | "medium" | "low";
+  condition: "waste" | "possibly-sellable" | "unclear";
+  notes?: string;
+};
+
+type WasteLogPayload = {
+  logId: string;
+  location: string;
+  wasteItems: WasteItem[];
+  totalEstimatedWasteCostIDR: number;
+  imageQuality: string;
+  recommendation: string;
+};
+
+// ── Agent message rendering ───────────────────────────────────────────────────
 
 function CompactBarItem({ item, maxValue }: { item: { label: string; value: number; highlight?: boolean }; maxValue: number }) {
   const pct = (item.value / maxValue) * 100;
@@ -149,16 +174,149 @@ function RankedBarItem({
 
 function toneClass(tone?: "negative" | "positive" | "muted" | "benchmark"): string {
   switch (tone) {
-    case "negative":
-      return "text-destructive num";
-    case "positive":
-      return "text-success num";
-    case "muted":
-      return "text-muted-foreground italic";
-    default:
-      return "text-foreground";
+    case "negative": return "text-destructive num";
+    case "positive": return "text-success num";
+    case "muted": return "text-muted-foreground italic";
+    default: return "text-foreground";
   }
 }
+
+// ── Waste log bubble ──────────────────────────────────────────────────────────
+
+function WasteLogBubble({ payload }: { payload: WasteLogPayload }) {
+  const [items, setItems] = useState<WasteItem[]>(payload.wasteItems);
+  const [editMode, setEditMode] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+
+  const total = items.reduce((s, i) => s + i.estimatedCostIDR, 0);
+
+  const handleConfirm = async () => {
+    try {
+      await fetch(`http://localhost:3001/api/waste-log/${payload.logId}/confirm`, {
+        method: "POST",
+      });
+      setConfirmed(true);
+      toast.success(
+        `Waste logged for ${payload.location} · Rp ${(total / 1000).toFixed(0)}K`,
+      );
+    } catch {
+      toast.error("Could not save waste log — check backend connection.");
+    }
+  };
+
+  const conditionLabel = (c: WasteItem["condition"]) =>
+    c === "waste" ? "Waste" : c === "possibly-sellable" ? "Possibly OK" : "Unclear";
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="font-serif text-[15px] text-ink leading-snug">Waste log recorded</div>
+          <div className="text-[10px] text-muted-foreground mt-0.5">
+            📍 {payload.location} · {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })} · End of day
+          </div>
+        </div>
+        <span className={cn(
+          "text-xs border rounded-sm px-2 py-0.5",
+          payload.imageQuality === "clear"
+            ? "text-success border-success/30 bg-success/8"
+            : "text-warning border-warning/30 bg-warning/8",
+        )}>
+          {payload.imageQuality === "clear" ? "🟢" : "🟡"}{" "}
+          {payload.imageQuality === "clear" ? "High" : "Medium"}
+        </span>
+      </div>
+
+      {/* Items table */}
+      <div className="overflow-x-auto -mx-0.5">
+        <table className="text-xs w-full">
+          <thead>
+            <tr className="border-b border-border/70">
+              <th className="text-left py-1.5 pr-3 text-muted-foreground font-normal">SKU</th>
+              <th className="text-right py-1.5 px-2 text-muted-foreground font-normal">Units</th>
+              <th className="text-right py-1.5 px-2 text-muted-foreground font-normal">Cost (IDR)</th>
+              <th className="text-left py-1.5 pl-2 text-muted-foreground font-normal">Condition</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, i) => (
+              <tr key={i} className="border-b border-border/30 last:border-0">
+                <td className="py-1.5 pr-3 text-foreground font-medium">{item.sku}</td>
+                <td className="py-1.5 px-2 text-right num">
+                  {editMode ? (
+                    <input
+                      type="number"
+                      min={0}
+                      value={item.estimatedUnits}
+                      onChange={(e) => {
+                        const units = Number(e.target.value);
+                        setItems((prev) =>
+                          prev.map((it, idx) =>
+                            idx === i
+                              ? { ...it, estimatedUnits: units, estimatedCostIDR: Math.round((it.estimatedCostIDR / it.estimatedUnits) * units) }
+                              : it,
+                          ),
+                        );
+                      }}
+                      className="w-16 text-right bg-secondary border border-border/70 rounded-sm px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-walnut/40"
+                    />
+                  ) : (
+                    item.estimatedUnits
+                  )}
+                </td>
+                <td className="py-1.5 px-2 text-right num text-muted-foreground">
+                  Rp {(item.estimatedCostIDR / 1000).toFixed(0)}K
+                </td>
+                <td className={cn("py-1.5 pl-2", item.condition === "waste" ? "text-destructive" : "text-warning")}>
+                  {conditionLabel(item.condition)}
+                </td>
+              </tr>
+            ))}
+            <tr className="border-t border-border/70 font-medium">
+              <td className="py-1.5 pr-3 text-ink">Total waste cost</td>
+              <td className="py-1.5 px-2 text-right num">{items.reduce((s, i) => s + i.estimatedUnits, 0)}</td>
+              <td className="py-1.5 px-2 text-right num text-destructive">
+                Rp {(total / 1000).toFixed(0)}K
+              </td>
+              <td />
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* Recommendation */}
+      <p className="text-xs text-muted-foreground leading-relaxed italic">
+        {payload.recommendation}
+      </p>
+
+      {/* Actions */}
+      {!confirmed ? (
+        <div className="flex gap-2 flex-wrap pt-1">
+          <button
+            type="button"
+            onClick={handleConfirm}
+            className="text-xs inline-flex items-center gap-1.5 rounded-sm border border-success/40 bg-success/8 hover:bg-success/15 text-success px-2.5 py-1 transition-colors"
+          >
+            Confirm & save to log →
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditMode((v) => !v)}
+            className="text-xs inline-flex items-center gap-1.5 rounded-sm border border-border/70 bg-card hover:bg-secondary/40 text-muted-foreground hover:text-foreground px-2.5 py-1 transition-colors"
+          >
+            {editMode ? "Done editing" : "Edit quantities →"}
+          </button>
+        </div>
+      ) : (
+        <div className="text-xs text-success flex items-center gap-1.5">
+          <span>✓</span> Saved to waste log
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Agent bubble ──────────────────────────────────────────────────────────────
 
 function AgentBubble({
   content,
@@ -194,7 +352,6 @@ function AgentBubble({
 
   return (
     <div className="space-y-3">
-      {/* Confidence badge at the very top when there's no headline */}
       {!hasHeadline && confidence && <ConfidenceBadge confidence={confidence} />}
       {content.map((block, i) => {
         if (block.type === "text") {
@@ -382,7 +539,6 @@ function AgentBubble({
             </button>
           );
         }
-        // Iter4 — real API response rendered as structured bubble
         if (block.type === "document-analysis-result" && confidence) {
           return (
             <DocumentAnalysisBubble
@@ -392,6 +548,22 @@ function AgentBubble({
               citations={block.citations}
               confidence={confidence}
               crossReferenced={block.crossReferenced}
+            />
+          );
+        }
+        // F3 — waste log result
+        if (block.type === "waste-log-result") {
+          return (
+            <WasteLogBubble
+              key={i}
+              payload={{
+                logId: block.logId,
+                location: block.location,
+                wasteItems: block.wasteItems,
+                totalEstimatedWasteCostIDR: block.totalEstimatedWasteCostIDR,
+                imageQuality: block.imageQuality,
+                recommendation: block.recommendation,
+              }}
             />
           );
         }
@@ -488,7 +660,6 @@ function ThinkingDots() {
   );
 }
 
-// Iter4 — cycling phases shown during real API document analysis
 const ANALYSIS_PHASES = ["Reading document…", "Extracting data…", "Cross-referencing platform metrics…"];
 
 function ThinkingDotsAnalyzing() {
@@ -607,9 +778,94 @@ function AnomalySidebar({
   );
 }
 
-// -----------------------------------------------------------------------------
-// Main scene
-// -----------------------------------------------------------------------------
+// ── Memory indicator badge ────────────────────────────────────────────────────
+
+function MemoryBadge({ sessionId }: { sessionId: string }) {
+  const [count, setCount] = useState(0);
+  const [open, setOpen] = useState(false);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [createdAt, setCreatedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const res = await fetch(`http://localhost:3001/api/session/${sessionId}/stats`);
+        if (res.ok) {
+          const data = await res.json() as { messageCount: number; summary: string | null; createdAt: number | null };
+          setCount(data.messageCount);
+          setSummary(data.summary);
+          setCreatedAt(data.createdAt);
+        }
+      } catch {
+        // backend not running — silently ignore
+      }
+    };
+    void fetchStats();
+    const interval = setInterval(() => void fetchStats(), 15_000);
+    return () => clearInterval(interval);
+  }, [sessionId]);
+
+  const handleClearMemory = async () => {
+    if (!confirm("Clear all conversation memory for this session?")) return;
+    try {
+      await fetch(`http://localhost:3001/api/session/${sessionId}`, { method: "DELETE" });
+      setCount(0);
+      setSummary(null);
+      setOpen(false);
+      toast.success("Conversation memory cleared.");
+    } catch {
+      toast.error("Could not clear memory — check backend connection.");
+    }
+  };
+
+  if (count === 0) return null;
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] border rounded-sm px-2 py-0.5 text-muted-foreground border-border/70 bg-secondary/40 hover:border-walnut/40 hover:text-foreground transition-colors"
+      >
+        <MessageSquare className="size-3" />
+        <span className="num">{count}</span> remembered
+        <ChevronDown className="size-3" />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-sm border border-border/70 bg-card shadow-lg p-3 space-y-2.5">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Session memory</div>
+          {createdAt && (
+            <div className="text-xs text-foreground">
+              Started: {new Date(createdAt).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit" })}
+            </div>
+          )}
+          <div className="text-xs text-foreground">
+            <span className="num font-medium">{count}</span> messages remembered
+          </div>
+          {summary && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Topics discussed</div>
+              <p className="text-xs text-muted-foreground leading-relaxed">{summary}</p>
+            </div>
+          )}
+          <div className="flex gap-2 pt-1 border-t border-border/50">
+            <button
+              type="button"
+              onClick={handleClearMemory}
+              className="text-[11px] text-destructive hover:underline flex items-center gap-1"
+            >
+              <Trash2 className="size-3" />
+              Clear memory
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main scene ────────────────────────────────────────────────────────────────
 
 function M3FinancialAgent() {
   const {
@@ -619,12 +875,16 @@ function M3FinancialAgent() {
     clearM3DocFilter,
     openCompareView,
     closeCompareView,
+    openWhatIfView,
+    closeWhatIfView,
   } = useAppNav();
   const persona = m3.persona;
   const smLocation = m3.smLocation;
   const compareActive = m3.compareMode !== "off";
+  const whatIfActive = m3.whatIfMode;
 
-  // Persona-filtered base messages + live appended messages.
+  const sessionId = useMemo(() => getSessionId(), []);
+
   const baseMessages = useMemo(
     () => ALL_HISTORY.filter((m) => messageMatchesPersona(m, persona, smLocation)),
     [persona, smLocation],
@@ -637,17 +897,21 @@ function M3FinancialAgent() {
   const messageRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
   const [flashId, setFlashId] = useState<string | null>(null);
 
-  // Iter4 — upload state
+  // Upload state
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [uploadMode, setUploadMode] = useState<"doc" | "waste-log">("doc");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [liveApiActive, setLiveApiActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const wasteFileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileSelect = useCallback((file: File) => {
-    const allowed = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+  const handleFileSelect = useCallback((file: File, mode: "doc" | "waste-log" = "doc") => {
+    const docAllowed = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+    const imgAllowed = ["image/jpeg", "image/png", "image/webp"];
+    const allowed = mode === "waste-log" ? imgAllowed : docAllowed;
     if (!allowed.includes(file.type)) {
-      setUploadError("Only JPEG, PNG, WEBP, and PDF files are supported.");
+      setUploadError(mode === "waste-log" ? "Only JPEG, PNG, WEBP images are supported for waste logging." : "Only JPEG, PNG, WEBP, and PDF files are supported.");
       return;
     }
     if (file.size > 20 * 1024 * 1024) {
@@ -655,15 +919,14 @@ function M3FinancialAgent() {
       return;
     }
     setUploadedFile(file);
+    setUploadMode(mode);
     setUploadError(null);
   }, []);
 
   const messages = useMemo(() => [...baseMessages, ...liveMessages], [baseMessages, liveMessages]);
 
-  // "Filter by cited doc" — applied on top of persona filtering.
   const visibleMessages = useMemo(() => {
     if (!m3.filterByCitedDoc) return messages;
-    // Show user + agent message pairs that reference the doc.
     const docId = m3.filterByCitedDoc;
     const result: ChatMessage[] = [];
     for (let i = 0; i < messages.length; i++) {
@@ -684,7 +947,6 @@ function M3FinancialAgent() {
     messageRefs.current.set(id, el);
   };
 
-  // Handle scroll-to-message from Data → M3 jumpback.
   useEffect(() => {
     const id = consumeScrollToMessageId();
     if (id) {
@@ -698,17 +960,27 @@ function M3FinancialAgent() {
     }
   }, [consumeScrollToMessageId, visibleMessages]);
 
-  // Handle pending prompt from Data tab "Open in M3" button.
   useEffect(() => {
     const p = consumePendingPrompt();
     if (p) setInputValue(p);
   }, [consumePendingPrompt]);
 
-  // Auto-scroll to bottom when new messages arrive (but not when scrolling to specific message).
   useEffect(() => {
     if (m3.scrollToMessageId) return;
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [liveMessages.length, thinking, m3.scrollToMessageId]);
+
+  const saveMessageToDb = useCallback((role: "user" | "agent", content: string, type?: string) => {
+    fetch(`http://localhost:3001/api/session/${sessionId}/stats`).catch(() => {
+      // ignore — DB might not be running
+    });
+    // Save via a fire-and-forget approach; the real saving happens server-side
+    void fetch("http://localhost:3001/api/save-message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId, role, content, messageType: type ?? "chat" }),
+    }).catch(() => { /* silently ignore */ });
+  }, [sessionId]);
 
   const handleSend = async (text?: string) => {
     const query = (text ?? inputValue).trim();
@@ -727,7 +999,80 @@ function M3FinancialAgent() {
     setLiveMessages((prev) => [...prev, userMsg]);
     setInputValue("");
 
-    // Iter4 — if a file is attached, call the real API
+    // F3 — waste-log mode
+    if (uploadedFile && uploadMode === "waste-log") {
+      const file = uploadedFile;
+      setUploadedFile(null);
+      setUploadError(null);
+      setIsAnalyzing(true);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("location", smLocation);
+        formData.append("sessionId", sessionId);
+        const response = await fetch("http://localhost:3001/api/waste-log", {
+          method: "POST",
+          body: formData,
+        });
+        if (!response.ok) {
+          const err = await response.json() as { error: string };
+          throw new Error(err.error);
+        }
+        setLiveApiActive(true);
+        const result = await response.json() as {
+          logId: string;
+          wasteItems: WasteItem[];
+          totalEstimatedWasteCostIDR: number;
+          imageQuality: string;
+          recommendation: string;
+        };
+        const confidence: Confidence = {
+          level: result.imageQuality === "clear" ? "high" : "medium",
+          summary: `Image quality: ${result.imageQuality}`,
+          whyDetails: [`Photo was ${result.imageQuality} — ${result.imageQuality === "clear" ? "high" : "medium"} confidence in item identification`],
+        };
+        const agentMsg: ChatMessage = {
+          id: `a-wl-${Date.now()}`,
+          role: "agent",
+          persona,
+          storeManagerLocation: smLocation,
+          confidence,
+          content: [
+            {
+              type: "waste-log-result" as const,
+              logId: result.logId,
+              location: smLocation,
+              wasteItems: result.wasteItems,
+              totalEstimatedWasteCostIDR: result.totalEstimatedWasteCostIDR,
+              imageQuality: result.imageQuality,
+              recommendation: result.recommendation,
+            } as AgentMessageContent,
+          ],
+          timestamp: ts(),
+        };
+        setLiveMessages((prev) => [...prev, agentMsg]);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Waste analysis failed";
+        setUploadError(message);
+        const errMsg: ChatMessage = {
+          id: `a-err-${Date.now()}`,
+          role: "agent",
+          persona,
+          content: [
+            { type: "text", text: `Could not analyze the waste photo: ${message}` },
+            { type: "bullets", items: ["Check that the backend server is running (port 3001)", "Ensure GEMINI_API_KEY is set in .env", "Use a clear, well-lit photo of the waste items"] },
+          ],
+          timestamp: ts(),
+        };
+        setLiveMessages((prev) => [...prev, errMsg]);
+      } finally {
+        setIsAnalyzing(false);
+        setUploadMode("doc");
+      }
+      return;
+    }
+
+    // Document upload with live API
     if (uploadedFile) {
       const file = uploadedFile;
       setUploadedFile(null);
@@ -739,6 +1084,7 @@ function M3FinancialAgent() {
           question: query,
           persona,
           activeLocation: persona === "StoreManager" ? smLocation : "Chain-wide",
+          sessionId,
         });
         setLiveApiActive(true);
         const confidence = {
@@ -781,11 +1127,13 @@ function M3FinancialAgent() {
         setLiveMessages((prev) => [...prev, errMsg]);
       } finally {
         setIsAnalyzing(false);
+        setUploadMode("doc");
       }
       return;
     }
 
-    // Existing mock behavior
+    // Mock chat behavior + save to memory
+    saveMessageToDb("user", query, "chat");
     setThinking(true);
     setTimeout(() => {
       const lower = query.toLowerCase();
@@ -822,6 +1170,11 @@ function M3FinancialAgent() {
 
       setThinking(false);
       setLiveMessages((prev) => [...prev, ...agentMsgs]);
+      // Save agent reply to memory
+      const agentText = agentMsgs[0]?.role === "agent"
+        ? (typeof agentMsgs[0].content === "string" ? agentMsgs[0].content : query)
+        : query;
+      saveMessageToDb("agent", agentText, "chat");
     }, 1200);
   };
 
@@ -829,8 +1182,10 @@ function M3FinancialAgent() {
     handleSend(`Investigate ${alert.location} alert: ${alert.headline}`);
   };
 
-  // Compare panel "Generate explanation" — closes the panel, appends the
-  // pre-written agent reply (with confidence marker) to the chat, scrolls there.
+  const handleInjectPrompt = useCallback((prompt: string) => {
+    setInputValue(prompt);
+  }, []);
+
   const handleGenerateExplanation = (leftId: string, rightId: string) => {
     const left = getLocation(leftId);
     const right = getLocation(rightId);
@@ -854,6 +1209,10 @@ function M3FinancialAgent() {
     closeCompareView();
   };
 
+  const handleWhatIfFollowUp = useCallback((text: string) => {
+    setInputValue(text);
+  }, []);
+
   return (
     <AppShell>
       <PageHeader
@@ -871,14 +1230,24 @@ function M3FinancialAgent() {
             <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] border rounded-sm px-2 py-0.5 text-muted-foreground border-border/70 bg-secondary/40">
               Mock data
             </span>
+            <MemoryBadge sessionId={sessionId} />
           </div>
         }
       />
 
       <PersonaSwitcher />
 
-      {persona === "CEO" && !compareActive && (
-        <div className="flex justify-end mb-3 -mt-2">
+      {/* CEO header actions: Compare + What-if */}
+      {persona === "CEO" && !compareActive && !whatIfActive && (
+        <div className="flex justify-end mb-3 -mt-2 gap-2">
+          <button
+            type="button"
+            onClick={() => openWhatIfView()}
+            className="text-xs inline-flex items-center gap-1.5 rounded-sm border border-walnut/30 bg-card hover:bg-secondary/50 hover:border-walnut/60 text-walnut hover:text-ink px-2.5 py-1 transition-colors"
+          >
+            <Zap className="size-3.5" />
+            What-if
+          </button>
           <button
             type="button"
             onClick={() => openCompareView({ mode: "pair" })}
@@ -890,8 +1259,13 @@ function M3FinancialAgent() {
         </div>
       )}
 
-      {!compareActive && (persona === "CEO" ? <MorningBriefing /> : <SmBriefing />)}
-      {!compareActive && <KpiStrip />}
+      {/* Briefing — CEO gets MorningBriefing, SM gets StoreChecklist */}
+      {!compareActive && !whatIfActive && (
+        persona === "CEO"
+          ? <MorningBriefing />
+          : <StoreChecklist location={smLocation} onInjectPrompt={handleInjectPrompt} />
+      )}
+      {!compareActive && !whatIfActive && <KpiStrip />}
 
       {m3.filterByCitedDoc && (
         <div className="mb-3 rounded-sm border border-gold/40 bg-gold/10 px-3 py-2 flex items-center gap-2 text-xs text-ink">
@@ -911,154 +1285,205 @@ function M3FinancialAgent() {
       )}
 
       <div className="grid grid-cols-[1fr_280px] gap-5 items-start">
-        {/* Chat panel — replaced by ComparePanel when compare mode is active */}
-        {compareActive ? (
+        {/* Left panel: what-if / compare / chat */}
+        {whatIfActive ? (
+          <WhatIfPanel
+            onClose={closeWhatIfView}
+            onAskFollowUp={handleWhatIfFollowUp}
+          />
+        ) : compareActive ? (
           <ComparePanel onGenerateExplanation={handleGenerateExplanation} />
         ) : (
-        <div
-          className="rounded-sm border border-border/70 bg-background flex flex-col"
-          style={{ height: "calc(100vh - 300px)", minHeight: 520 }}
-        >
-          {/* Suggested prompts */}
-          <div className="px-4 pt-4 pb-3 border-b border-border/70 flex flex-wrap gap-2">
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground mr-1 self-center">
-              {persona === "CEO" ? "Strategic queries" : "Operational queries"}
-            </span>
-            {suggestedPrompts.map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => handleSend(p)}
-                className="text-xs bg-secondary/60 border border-border/70 rounded-sm px-2.5 py-1 text-muted-foreground hover:text-foreground hover:border-walnut/40 transition-colors text-left"
-              >
-                {p}
-              </button>
-            ))}
-          </div>
+          <div
+            className="rounded-sm border border-border/70 bg-background flex flex-col"
+            style={{ height: "calc(100vh - 300px)", minHeight: 520 }}
+          >
+            {/* Suggested prompts */}
+            <div className="px-4 pt-4 pb-3 border-b border-border/70 flex flex-wrap gap-2">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground mr-1 self-center">
+                {persona === "CEO" ? "Strategic queries" : "Operational queries"}
+              </span>
+              {suggestedPrompts.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => handleSend(p)}
+                  className="text-xs bg-secondary/60 border border-border/70 rounded-sm px-2.5 py-1 text-muted-foreground hover:text-foreground hover:border-walnut/40 transition-colors text-left"
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
 
-          {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {visibleMessages.length === 0 ? (
-              <div className="h-full grid place-items-center text-xs text-muted-foreground">
-                No messages match this view yet. Try the suggested prompts above.
-              </div>
-            ) : (
-              visibleMessages.map((msg) => (
-                <ChatBubble
-                  key={msg.id}
-                  message={msg}
-                  highlight={flashId === msg.id}
-                  registerRef={registerRef}
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {visibleMessages.length === 0 ? (
+                <div className="h-full grid place-items-center text-xs text-muted-foreground">
+                  No messages match this view yet. Try the suggested prompts above.
+                </div>
+              ) : (
+                visibleMessages.map((msg) => (
+                  <ChatBubble
+                    key={msg.id}
+                    message={msg}
+                    highlight={flashId === msg.id}
+                    registerRef={registerRef}
+                  />
+                ))
+              )}
+              {isAnalyzing && <ThinkingDotsAnalyzing />}
+              {thinking && <ThinkingDots />}
+              <div ref={bottomRef} />
+            </div>
+
+            {/* Input */}
+            <div className="border-t border-border/70 p-3 space-y-2">
+              {/* Hidden file inputs */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                aria-label="Upload document for analysis"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleFileSelect(f, "doc");
+                  e.target.value = "";
+                }}
+              />
+              {persona === "StoreManager" && (
+                <input
+                  ref={wasteFileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  aria-label="Upload waste photo"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleFileSelect(f, "waste-log");
+                    e.target.value = "";
+                  }}
                 />
-              ))
-            )}
-            {isAnalyzing && <ThinkingDotsAnalyzing />}
-            {thinking && <ThinkingDots />}
-            <div ref={bottomRef} />
-          </div>
+              )}
 
-          {/* Input */}
-          <div className="border-t border-border/70 p-3 space-y-2">
-            {/* Hidden file input */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp,application/pdf"
-              aria-label="Upload document for analysis"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) handleFileSelect(f);
-                e.target.value = "";
-              }}
-            />
+              {/* File preview chip */}
+              {uploadedFile && (
+                <div className="flex items-center gap-2 rounded-sm border border-gold/40 bg-gold/8 px-3 py-1.5">
+                  {uploadMode === "waste-log" ? (
+                    <Trash2 className="size-3.5 text-walnut shrink-0" />
+                  ) : uploadedFile.type.startsWith("image/") ? (
+                    <ImageIcon className="size-3.5 text-walnut shrink-0" />
+                  ) : (
+                    <FileText className="size-3.5 text-walnut shrink-0" />
+                  )}
+                  <span className="text-xs text-ink truncate flex-1 min-w-0">{uploadedFile.name}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0">
+                    {(uploadedFile.size / 1024 / 1024).toFixed(1)} MB ·{" "}
+                    {uploadMode === "waste-log" ? "Waste log mode" : "Ready to analyze"}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="Remove file"
+                    onClick={() => { setUploadedFile(null); setUploadError(null); setUploadMode("doc"); }}
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+              )}
 
-            {/* File preview chip */}
-            {uploadedFile && (
-              <div className="flex items-center gap-2 rounded-sm border border-gold/40 bg-gold/8 px-3 py-1.5">
-                {uploadedFile.type.startsWith("image/") ? (
-                  <ImageIcon className="size-3.5 text-walnut shrink-0" />
-                ) : (
-                  <FileText className="size-3.5 text-walnut shrink-0" />
-                )}
-                <span className="text-xs text-ink truncate flex-1 min-w-0">{uploadedFile.name}</span>
-                <span className="text-[10px] text-muted-foreground shrink-0">
-                  {(uploadedFile.size / 1024 / 1024).toFixed(1)} MB · Ready to analyze
-                </span>
+              {uploadError && (
+                <p className="text-xs text-destructive px-1">{uploadError}</p>
+              )}
+
+              {/* Input row */}
+              <div
+                className="flex items-end gap-2"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const f = e.dataTransfer.files?.[0];
+                  if (f) handleFileSelect(f, "doc");
+                }}
+              >
+                {/* Document upload button */}
                 <button
                   type="button"
-                  aria-label="Remove file"
-                  onClick={() => { setUploadedFile(null); setUploadError(null); }}
-                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                  aria-label="Attach file"
+                  onClick={() => fileInputRef.current?.click()}
+                  className={cn(
+                    "shrink-0 flex items-center justify-center size-[38px] rounded-sm border transition-colors",
+                    uploadedFile && uploadMode === "doc"
+                      ? "border-gold/60 text-walnut bg-gold/10"
+                      : "border-border/70 text-muted-foreground hover:text-foreground hover:border-walnut/40 bg-card",
+                  )}
                 >
-                  <X className="size-3.5" />
+                  <Paperclip className="size-4" />
+                </button>
+
+                {/* Waste log button — Store Manager only */}
+                {persona === "StoreManager" && (
+                  <button
+                    type="button"
+                    aria-label="Log waste photo"
+                    title="Log end-of-day waste"
+                    onClick={() => wasteFileInputRef.current?.click()}
+                    className={cn(
+                      "shrink-0 flex items-center justify-center size-[38px] rounded-sm border transition-colors",
+                      uploadedFile && uploadMode === "waste-log"
+                        ? "border-gold/60 text-walnut bg-gold/10"
+                        : "border-border/70 text-muted-foreground hover:text-foreground hover:border-walnut/40 bg-card",
+                    )}
+                  >
+                    <Trash2 className="size-4" />
+                  </button>
+                )}
+
+                <textarea
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void handleSend();
+                    }
+                  }}
+                  placeholder={
+                    uploadedFile && uploadMode === "waste-log"
+                      ? "Add a note about this waste photo… (or press Send)"
+                      : uploadedFile
+                        ? "Ask a question about this document…"
+                        : persona === "CEO"
+                          ? "Ask a chain-wide question…"
+                          : `Ask about ${smLocation}…`
+                  }
+                  rows={1}
+                  className="flex-1 resize-none bg-card border border-border/70 rounded-sm px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-walnut/40 placeholder:text-muted-foreground/50"
+                  style={{ minHeight: 38 }}
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleSend()}
+                  disabled={(!inputValue.trim() && !uploadedFile) || thinking || isAnalyzing}
+                  aria-label="Send message"
+                  className="shrink-0 flex items-center justify-center size-[38px] rounded-sm bg-ink text-cream disabled:opacity-40 hover:bg-ink/90 transition-colors"
+                >
+                  <Send className="size-4" />
                 </button>
               </div>
-            )}
-
-            {/* Error message */}
-            {uploadError && (
-              <p className="text-xs text-destructive px-1">{uploadError}</p>
-            )}
-
-            {/* Input row */}
-            <div
-              className="flex items-end gap-2"
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                const f = e.dataTransfer.files?.[0];
-                if (f) handleFileSelect(f);
-              }}
-            >
-              <button
-                type="button"
-                aria-label="Attach file"
-                onClick={() => fileInputRef.current?.click()}
-                className={cn(
-                  "shrink-0 flex items-center justify-center size-[38px] rounded-sm border transition-colors",
-                  uploadedFile
-                    ? "border-gold/60 text-walnut bg-gold/10"
-                    : "border-border/70 text-muted-foreground hover:text-foreground hover:border-walnut/40 bg-card",
-                )}
-              >
-                <Paperclip className="size-4" />
-              </button>
-              <textarea
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void handleSend();
-                  }
-                }}
-                placeholder={
-                  uploadedFile
-                    ? "Ask a question about this document…"
-                    : persona === "CEO"
-                      ? "Ask a chain-wide question…"
-                      : `Ask about ${smLocation}…`
-                }
-                rows={1}
-                className="flex-1 resize-none bg-card border border-border/70 rounded-sm px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-walnut/40 placeholder:text-muted-foreground/50"
-                style={{ minHeight: 38 }}
-              />
-              <button
-                type="button"
-                onClick={() => void handleSend()}
-                disabled={!inputValue.trim() || thinking || isAnalyzing}
-                aria-label="Send message"
-                className="shrink-0 flex items-center justify-center size-[38px] rounded-sm bg-ink text-cream disabled:opacity-40 hover:bg-ink/90 transition-colors"
-              >
-                <Send className="size-4" />
-              </button>
             </div>
           </div>
-        </div>
         )}
 
-        <AnomalySidebar alerts={ANOMALY_ALERTS} onInvestigate={handleInvestigate} />
+        {/* Right column: alerts + trend watch */}
+        <div className="flex flex-col gap-4">
+          <AnomalySidebar alerts={ANOMALY_ALERTS} onInvestigate={handleInvestigate} />
+          <TrendWatch
+            persona={persona}
+            smLocation={smLocation}
+            onInjectPrompt={handleInjectPrompt}
+          />
+        </div>
       </div>
     </AppShell>
   );

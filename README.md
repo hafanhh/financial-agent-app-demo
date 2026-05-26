@@ -7,6 +7,7 @@
 ```bash
 npm install        # first time only
 npm run dev        # frontend :5173 + backend :3001
+npm run dev:server # backend only
 ```
 
 > **Iteration 4 — Real LLM setup:** Copy `server.env.example` to `.env` and add your Anthropic API key before running. Without the key the server starts but returns 503 on document uploads; all mock features still work.
@@ -25,6 +26,8 @@ lsof -ti :3001 | xargs kill -9 && npm run dev:server
 Navigate from the left sidebar in order: Platform Overview → M1 → M2 → M3 → **Data & Knowledge** → Future Modules.
 
 > **What's new in Iteration 2:** M3 has a persona switcher (CEO ↔ Store Manager) with persona-aware suggested prompts and 5 hardcoded example conversations. A new "Data & Knowledge" scene shows the documents and structured sources the agents draw from, with bi-directional navigation: click a citation in M3 to jump to the document with the cited region highlighted; click "Open in M3 →" in a document to filter the chat to messages citing it.
+>
+> **What's new in Iteration 5 (M3-only):** 5 new features — see [New in Iteration 5](#new-in-iteration-5) section below.
 >
 > **What's new in Iteration 4 (M3-only):** Document upload + real Gemini API call in M3 chat. Click the paperclip icon (or drag-and-drop) to attach a PDF or image. The backend calls `gemini-1.5-flash` with the file + BAKED business context, returns a structured response (extracted metrics table, cross-references to M1/M2/M3 platform data, confidence badge). A 🟢 Live API badge appears in the M3 header after the first successful call. All existing mock conversations unchanged. Backend runs on port 3001 via Express + multer.
 >
@@ -181,3 +184,59 @@ A one-paragraph summary of deviations, ambiguities, and what was cut:
 - **Highlight matching.** The spec described "highlighted citation regions" by `(page, anchor)`. To keep mock data terse, anchors are loose keywords matched inside the rendered body (heading text, callout content, row substrings) — easy to extend but not bullet-proof if a doc gains conflicting content.
 - **Animations.** No new animations beyond the gold ring-flash on the target message when jumping back from Data → M3 — kept minimal to stay within the existing aesthetic.
 - **What was cut / would add next.** (a) The "messages that cited this document (max 3)" list under the chat input in C2a — the *pendingPrompt* is loaded into the input box but the recent-citation list under it was deemed lower value than the prompt itself. Easy add. (b) The Catalog filter in C1b shows the 3 source cards but doesn't animate them in — a soft fade would polish. (c) The Knowledge Base file search box is filename + description substring only; full-text body search would be a real RAG-like demo move.
+
+---
+
+## New in Iteration 5
+
+### Store Manager Daily Checklist
+Switch to Store Manager persona → see today's 3 action items instead of the CEO Morning Briefing.
+Checklist changes per location (all 7 hardcoded). Checkboxes persist in `localStorage` and reset daily.
+Each item has an **[Ask agent →]** button that injects a pre-written prompt into the chat input (doesn't auto-send).
+
+### What-if Scenario Simulator
+CEO view → click **⚡ What-if** button → pick scenario type → fill parameters → see P&L impact.
+4 scenario types: price change (slider −20% to +20%), close a day (7 days × 7 locations), staffing (FTE slider), cut/add SKU.
+Each result shows a P&L table, key assumptions, and a recommendation with a confidence marker.
+"Ask follow-up in chat →" closes the panel and injects the context into chat.
+
+### Photo Waste Logging
+Store Manager → click **🗑️** button next to the paperclip → upload waste photo → Gemini identifies items, estimates quantities and cost → confirm to save.
+Saved to SQLite `waste_logs` table with `confirmed = 1` after user taps confirm.
+
+### Proactive Trend Alerts
+New **Trend watch** section below the Active Alerts sidebar.
+Shows multi-week direction (rate + consecutive weeks) + projection: `Current → Projected by [date]`.
+Persona-aware: CEO sees all 7 locations; Store Manager sees only their location's trends.
+Includes 1 positive trend (green) alongside problem trends.
+
+### Conversation Memory (SQLite)
+Chat history persists across page refreshes via SQLite at `server/data/baked.db` (gitignored).
+Every user and agent message is saved with session ID, persona, and message type.
+Memory badge in the M3 header shows message count; click to see session start time, topics, and a **Clear memory** button.
+Context injection is save-only in this iteration — summarization shipped as stubs.
+
+---
+
+## Demo talking points (Iteration 5)
+
+1. **"Switch to Store Manager. Instead of a blank chat, they see three things to do today — specific, actionable, sourced from yesterday's data. No WhatsApp from the CEO needed."**
+
+2. **"Back to CEO. I want to model a scenario — what if we raise croissant prices 10%? [click What-if → fill form → run] Here's the P&L impact with a confidence range and assumptions listed. This is what the CEO runs before a board meeting."**
+
+3. **"Now watch this — store manager takes a photo of end-of-day waste. [upload photo] Agent identifies each item, estimates cost, recommends tomorrow's production. One tap to confirm and it's logged. No spreadsheet."**
+
+4. **"Trend watch — this is different from anomalies. Anomalies tell you what went wrong this week. Trends tell you what's going wrong over 5 weeks. Ubud margin is down 1pt every week. At this rate, below target in 3 weeks. That's the difference between reactive and proactive."**
+
+5. **"And notice this badge — N messages remembered. [click badge] Session started at 9am. The agent knows what we discussed. Next time I log in, it picks up where we left off."**
+
+---
+
+## Implementation notes (Iteration 5)
+
+- **Mock data location:** `src/lib/data/` (project convention), not a new root-level `mockData/` folder.
+- **SQLite:** `better-sqlite3` synchronous driver. DB at `server/data/baked.db` (created on first `npm run dev`). WAL mode enabled.
+- **What-if context injection:** Scenario results close the panel and inject a follow-up prompt into chat. Not yet saved to memory as `message_type: 'scenario'` — that's the next step.
+- **Waste log confirm:** Calls `POST /api/waste-log/:id/confirm`. If backend is down, toast shows an error but UI remains usable.
+- **Memory context injection:** Save-only this iteration. The `buildContextMessages` + `generateSummary` flow is designed but not yet wired into `/api/analyze` calls — next iteration.
+- **What to build next:** (a) Context injection into every Gemini call, (b) scenario result saved as `message_type: 'scenario'` for cross-session memory, (c) "Updated just now" badge on waste CSV in the Data Catalog tab after logging, (d) Morning Briefing "Continuing from yesterday…" line when session has >5 prior messages.
