@@ -9,14 +9,14 @@ BAKED. AI Platform — a demo for a premium bakery-café chain (7 locations in B
 ## Commands
 
 ```bash
-# Full-stack dev (frontend + Express server concurrently)
+# Full-stack dev (frontend + Python backend concurrently)
 npm run dev
 
 # Frontend only (Vite on default port 5173)
 npm run dev:frontend
 
-# Backend only (Express on port 3001, hot-reload via tsx watch)
-npm run dev:server
+# Python backend only (FastAPI + uvicorn on port 3001, hot-reload)
+npm run dev:server:py
 
 # TypeScript check (no emit — run before committing)
 npx tsc --noEmit
@@ -43,9 +43,9 @@ SERVER_PORT=3001   # optional, defaults to 3001
 
 **Frontend** (`src/`) — Vite + TanStack Start (SSR-capable but used as SPA). Runs on port 5173.
 
-**Backend** (`server/`) — Express.js. Runs on port 3001. The frontend calls it at `http://localhost:3001`. Server files use `tsx` at runtime (no transpile step), so Node built-ins like `Buffer` and `process` work without explicit types in tsconfig.
+**Backend** (`backend/`) — Python FastAPI + uvicorn. Runs on port 3001. The frontend calls it at `http://localhost:3001`. Entry point: `backend/main.py`. Started via `python -m uvicorn backend.main:app --reload --port 3001`.
 
-The `tsconfig.json` only `include`s `src/` with `"types": ["vite/client"]` — server files rely on `tsx` for Node types. Pre-existing TS errors in server files about `Buffer`/`process` are expected and harmless.
+The legacy Express.js backend still exists at `server/` but is not the default. `npm run dev:server` (tsx watch) targets the old `server/index.ts` — use `npm run dev:server:py` for the active Python backend instead.
 
 ### Routing
 
@@ -84,15 +84,15 @@ Current types: `text`, `headline`, `table`, `bullets`, `bar-list`, `citations`, 
 
 ### Backend services
 
-`server/services/claude.ts` — wraps `@google/generative-ai` (Gemini). Model: `gemini-3-flash-preview`.
-- `analyzeDocument()` — document upload + question → structured JSON response
-- `analyzeWaste()` — waste photo → structured JSON of identified waste items
+`backend/services/claude.py` — wraps `google-genai` SDK. Model: `gemini-2.0-flash`.
+- `analyze_document()` — document upload + question → structured JSON response
+- `analyze_waste()` — waste photo → structured JSON of identified waste items
 
-`server/services/db.ts` — `better-sqlite3` (synchronous), WAL mode. DB file at `server/data/baked.db` (gitignored). Tables: `sessions`, `messages`, `waste_logs`, `session_summaries`. Call `initDb()` once at startup.
+`backend/services/db.py` — `sqlite3` (stdlib, synchronous), WAL mode. DB file at `backend/data/baked.db` (gitignored). Tables: `sessions`, `messages`, `waste_logs`, `session_summaries`. Call `init_db()` once at startup (called in `main.py`).
 
-`server/routes/analyze.ts` — `POST /api/analyze` (multipart), calls `analyzeDocument()`.
+`backend/routes/analyze.py` — `POST /api/analyze` (multipart), calls `analyze_document()`.
 
-`server/routes/waste-log.ts` — `POST /api/waste-log` (multipart, images only, multer), calls `analyzeWaste()`, saves to DB. `POST /api/waste-log/:id/confirm` — marks confirmed.
+`backend/routes/waste_log.py` — `POST /api/waste-log` (multipart, images only), calls `analyze_waste()`, saves to DB. `POST /api/waste-log/:id/confirm` — marks confirmed.
 
 ### Mock data location
 
@@ -118,8 +118,8 @@ Two personas: **CEO** (cross-location strategic view) and **StoreManager** (sing
 
 ## Key constraints
 
-**Do not touch M1 or M2 source files** when extending M3 or adding new features. Only extend M3 (`src/routes/m3.tsx`, `src/components/m3/`) and shared services (`src/lib/`, `server/`).
+**Do not touch M1 or M2 source files** when extending M3 or adding new features. Only extend M3 (`src/routes/m3.tsx`, `src/components/m3/`) and shared services (`src/lib/`, `backend/`).
 
-The Gemini system prompt (`server/prompts/system.ts`) hardcodes business context (locations, SKUs, margins, seasonal patterns). Update it when adding scenarios that require new grounding facts.
+The Gemini system prompt (`backend/prompts/system.py`) hardcodes business context (locations, SKUs, margins, seasonal patterns). Update it when adding scenarios that require new grounding facts.
 
 Checklist checkbox state persists in `localStorage` with key `baked_checklist_${location}_YYYY-MM-DD` and resets daily automatically (the date is part of the key).

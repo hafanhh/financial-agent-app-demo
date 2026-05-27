@@ -23,24 +23,24 @@ Tài liệu này mô tả toàn bộ data flow của project. Đọc theo thứ 
                     localhost:3001
                              │
 ┌────────────────────────────▼────────────────────────────────────┐
-│              BACKEND  (Express.js)  :3001                       │
+│              BACKEND  (Python FastAPI + uvicorn)  :3001         │
 │                                                                 │
-│   POST /api/analyze          → analyzeDocument() → Gemini API  │
-│   POST /api/waste-log        → analyzeWaste()    → Gemini API  │
+│   POST /api/analyze          → analyze_document() → Gemini API │
+│   POST /api/waste-log        → analyze_waste()    → Gemini API │
 │   POST /api/waste-log/:id/confirm                              │
 │   POST /api/save-message     → SQLite                          │
 │   GET  /api/session/:id/stats← SQLite                          │
 │   DELETE /api/session/:id    → SQLite                          │
 │                                                                 │
-│   Services: db.ts (SQLite)   claude.ts (Gemini wrapper)        │
+│   Services: db.py (SQLite)   claude.py (Gemini wrapper)        │
 └────────────────────────────┬────────────────────────────────────┘
                              │
               ┌──────────────┴──────────────┐
               │                             │
    ┌──────────▼──────────┐      ┌──────────▼──────────┐
    │   Google Gemini API │      │  SQLite (baked.db)  │
-   │  gemini-3-flash-    │      │  server/data/       │
-   │  preview            │      │  (gitignored)       │
+   │  gemini-2.0-flash   │      │  backend/data/      │
+   │                     │      │  (gitignored)       │
    └─────────────────────┘      └─────────────────────┘
 ```
 
@@ -179,15 +179,15 @@ User chọn file (PDF/image) + gõ câu hỏi → handleSend()
     │   └── src/services/analyzeApi.ts
     │       └── POST http://localhost:3001/api/analyze  (multipart/form-data)
     │           │
-    │           └── server/routes/analyze.ts
-    │               ├── multer → req.file.buffer (in-memory, không lưu disk)
-    │               ├── analyzeDocument(params)
-    │               │   └── server/services/claude.ts
-    │               │       ├── buildSystemPrompt(persona, location)
-    │               │       ├── Gửi base64 file + question → Gemini API
+    │           └── backend/routes/analyze.py
+    │               ├── FastAPI UploadFile → file.read() (in-memory, không lưu disk)
+    │               ├── analyze_document(params)
+    │               │   └── backend/services/claude.py
+    │               │       ├── build_system_prompt(persona, location)
+    │               │       ├── Gửi base64 file + question → Gemini API (gemini-2.0-flash)
     │               │       └── Parse JSON response → AnalyzeResult
-    │               ├── [nếu có sessionId] saveMessage() × 2 → SQLite
-    │               └── res.json(result)
+    │               ├── [nếu có sessionId] save_message() × 2 → SQLite
+    │               └── JSONResponse(result)
     │
     ├── Tạo agentMsg với type "document-analysis-result"
     ├── setLiveApiActive(true)  → hiển thị badge "Live API"
@@ -205,15 +205,15 @@ SM click 🗑️ → chọn ảnh (images only) → handleSend()
     ├── POST http://localhost:3001/api/waste-log  (multipart/form-data)
     │   │   Body: { file: imageFile, location, sessionId }
     │   │
-    │   └── server/routes/waste-log.ts
-    │       ├── multer (images only, in-memory)
-    │       ├── analyzeWaste({ fileBuffer, mimeType, location })
-    │       │   └── server/services/claude.ts
+    │   └── backend/routes/waste_log.py
+    │       ├── FastAPI UploadFile (images only, in-memory)
+    │       ├── analyze_waste({ file_buffer, mime_type, location })
+    │       │   └── backend/services/claude.py
     │       │       ├── WASTE_SYSTEM_PROMPT (khác với analyze prompt)
-    │       │       ├── Gửi ảnh → Gemini API
+    │       │       ├── Gửi ảnh → Gemini API (gemini-2.0-flash)
     │       │       └── Parse JSON → WasteLogResult
-    │       ├── saveWasteLog() → SQLite (confirmed=0)
-    │       └── res.json({ logId, wasteItems, totalCost, ... })
+    │       ├── save_waste_log() → SQLite (confirmed=0)
+    │       └── JSONResponse({ logId, wasteItems, totalCost, ... })
     │
     ├── Tạo agentMsg với type "waste-log-result"
     │   └── Render ra WasteLogBubble (bảng có thể edit số lượng)
@@ -255,7 +255,7 @@ MemoryBadge  polls GET /api/session/:id/stats  mỗi 15 giây
 → nút "Clear" → DELETE /api/session/:id → clearMessages()
 ```
 
-**Lưu ý:** Context injection (đưa messages cũ vào Gemini call) **chưa implement**. Hiện tại chỉ save, không inject.
+**Lưu ý:** Context injection (đưa messages cũ vào Gemini call) **chưa implement**. Hiện tại chỉ save, không inject. DB path: `backend/data/baked.db`.
 
 ---
 
@@ -305,9 +305,9 @@ MemoryBadge  polls GET /api/session/:id/stats  mỗi 15 giây
 | What-if results (F2) | Hardcoded formulas | `src/lib/data/whatIfScenarios.ts` |
 | Daily checklist (F1) | Hardcoded | `src/lib/data/storeManagerChecklist.ts` |
 | Knowledge Base docs | Hardcoded | `src/lib/data/knowledgeBase.ts` |
-| Document analysis | **Gemini API thật** | `server/services/claude.ts` |
-| Waste photo analysis | **Gemini API thật** | `server/services/claude.ts` |
-| Chat session history | **SQLite thật** | `server/services/db.ts` |
+| Document analysis | **Gemini API thật** | `backend/services/claude.py` |
+| Waste photo analysis | **Gemini API thật** | `backend/services/claude.py` |
+| Chat session history | **SQLite thật** | `backend/services/db.py` |
 
 ---
 

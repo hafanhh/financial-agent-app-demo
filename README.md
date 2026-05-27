@@ -10,11 +10,11 @@ npm run dev        # frontend :5173 + backend :3001
 npm run dev:server:py  # chỉ Python backend
 ```
 
-> **Iteration 4 — Real LLM setup:** Copy `server.env.example` to `.env` and add your Anthropic API key before running. Without the key the server starts but returns 503 on document uploads; all mock features still work.
+> **Iteration 4 — Real LLM setup:** Copy `server.env.example` to `.env` and add your Gemini API key before running. Without the key the server starts but returns 503 on document uploads; all mock features still work.
 
 ```bash
 cp server.env.example .env
-# edit .env — add ANTHROPIC_API_KEY=sk-ant-...
+# edit .env — add GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
 ### Restart backend server
@@ -29,7 +29,7 @@ Navigate from the left sidebar in order: Platform Overview → M1 → M2 → M3 
 >
 > **What's new in Iteration 5 (M3-only):** 5 new features — see [New in Iteration 5](#new-in-iteration-5) section below.
 >
-> **What's new in Iteration 4 (M3-only):** Document upload + real Gemini API call in M3 chat. Click the paperclip icon (or drag-and-drop) to attach a PDF or image. The backend calls `gemini-1.5-flash` with the file + BAKED business context, returns a structured response (extracted metrics table, cross-references to M1/M2/M3 platform data, confidence badge). A 🟢 Live API badge appears in the M3 header after the first successful call. All existing mock conversations unchanged. Backend runs on port 3001 via Express + multer.
+> **What's new in Iteration 4 (M3-only):** Document upload + real Gemini API call in M3 chat. Click the paperclip icon (or drag-and-drop) to attach a PDF or image. The backend calls `gemini-2.0-flash` with the file + BAKED business context, returns a structured response (extracted metrics table, cross-references to M1/M2/M3 platform data, confidence badge). A 🟢 Live API badge appears in the M3 header after the first successful call. All existing mock conversations unchanged. Backend runs on port 3001 via Python FastAPI + uvicorn.
 >
 > **What's new in Iteration 3 (M3-only):** Four CEO-surface features layered onto M3: (1) Morning Briefing card (1 red / 2 yellow / 1 green) at the top of the CEO view, (2) Compare Locations panel with 2-column pair view + Chain Overview mode + auto-generated explanation, (3) KPI Strip with sparklines and one-click drill-in prompts, (4) Confidence markers on every agent answer (high / medium / low + expandable "why"). Store Manager view gets the one-line briefing + persona-specific KPIs. **M1 and M2 source files were not modified.**
 
@@ -131,10 +131,10 @@ The `bunfig.toml` has a 24-hour release-age guard on new packages; no new depend
 
 ## Iteration 4 — implementation notes
 
-- **Completed fully.** Backend (Express + multer + Anthropic SDK) at `server/`, frontend upload UI wired into M3 chat input. Real API call → structured `document-analysis-result` message bubble with extracted metrics table, cross-reference badges, citation row, confidence badge (reuses iter3 component). Live API / Mock data transparency badges in M3 header.
+- **Completed fully.** Backend (Python FastAPI + uvicorn + Gemini SDK) at `backend/`, frontend upload UI wired into M3 chat input. Real API call → structured `document-analysis-result` message bubble with extracted metrics table, cross-reference badges, citation row, confidence badge (reuses iter3 component). Live API / Mock data transparency badges in M3 header.
 - **No streaming.** Standard JSON response per spec. Cycling thinking animation ("Reading document… → Extracting data… → Cross-referencing platform metrics…") gives visual feedback while waiting.
-- **API key not yet set.** Build and all mock features work without the key. Backend returns 503 with friendly error message in chat when key is missing. Add key to `.env` when ready to demo the real call.
-- **Model used.** `claude-sonnet-4-20250514` as specified. Native PDF + image support via Anthropic's document/image content blocks — no pre-processing.
+- **API key not yet set.** Build and all mock features work without the key. Backend returns 503 with friendly error message in chat when key is missing. Add `GEMINI_API_KEY` to `.env` when ready to demo the real call.
+- **Model used.** `gemini-2.0-flash`. Native PDF + image support via Google Gemini's multimodal API — no pre-processing.
 - **Server runs as a separate process.** `npm run dev` starts both via `concurrently`. Old `dev:frontend` alias still works standalone if backend not needed.
 - **M1/M2 untouched.** Only `src/routes/m3.tsx`, `src/lib/data/finance.ts`, `src/services/analyzeApi.ts`, and the new `src/components/m3/document-analysis-bubble.tsx` were added/modified.
 - **What I would add next.** (a) What-If panel (iter3 placeholder now ready to replace). (b) Streaming response — swap `response.json()` for a streaming fetch and show text token by token. (c) Save uploaded documents to the Knowledge Base as new entries so they appear in the Data tab.
